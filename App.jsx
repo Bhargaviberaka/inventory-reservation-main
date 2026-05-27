@@ -8,20 +8,29 @@ export default function App() {
   // State to track when the app is talking to the server
   const [isProcessing, setIsProcessing] = useState(false);
 
+  // Optimized Timer Logic using setInterval
   useEffect(() => {
+    let timer;
     if (status === "reserved" && timeLeft > 0) {
-      const timer = setTimeout(() => setTimeLeft(timeLeft - 1), 1000);
-      return () => clearTimeout(timer);
+      timer = setInterval(() => {
+        setTimeLeft((prevTime) => {
+          if (prevTime <= 1) {
+            clearInterval(timer);
+            setStatus("cancelled");
+            setReservationId(null);
+            // Deferred alert so it doesn't block state updates
+            setTimeout(() => {
+              alert("Reservation expired! The server has returned the item to available stock.");
+            }, 10);
+            return 0;
+          }
+          return prevTime - 1;
+        });
+      }, 1000);
     }
 
-    if (timeLeft === 0 && status === "reserved") {
-      setStatus("cancelled");
-      setReservationId(null);
-      alert(
-        "Reservation expired! The server has returned the item to available stock.",
-      );
-    }
-  }, [status, timeLeft]);
+    return () => clearInterval(timer);
+  }, [status]);
 
   const handleReserve = async () => {
     setIsProcessing(true); // Disable button immediately
@@ -29,12 +38,15 @@ export default function App() {
       const response = await fetch("http://localhost:8082/reserve", {
         method: "POST",
       });
+
+      if (!response.ok) {
+        throw new Error(`Server responded with status: ${response.status}`);
+      }
+
       const data = await response.json();
 
-      if (data.success) {
-        // NEW: Log the ID to verify Java is sending it correctly
+      if (data && data.success) {
         console.log("✅ Received Reservation ID:", data.reservationId);
-
         setStatus("reserved");
         setReservationId(data.reservationId);
         setTimeLeft(600);
@@ -42,9 +54,8 @@ export default function App() {
         setStatus("failed");
       }
     } catch (error) {
-      alert(
-        "Error: Cannot connect to Java backend. Is Eclipse running on port 8082?",
-      );
+      console.error("Reservation Error:", error);
+      alert("Error: Cannot connect to Java backend. Is Eclipse running on port 8082?");
     } finally {
       setIsProcessing(false); // Re-enable button when done
     }
@@ -53,7 +64,7 @@ export default function App() {
   const handleConfirm = async () => {
     setIsProcessing(true);
 
-    // NEW FAILSAFE: Don't crash the server if the ID is missing
+    // FAILSAFE: Prevent calling backend if state is missing
     if (!reservationId) {
       alert("Error: Reservation ID is missing from React state!");
       setIsProcessing(false);
@@ -65,10 +76,20 @@ export default function App() {
         `http://localhost:8082/confirm?id=${reservationId}`,
         { method: "POST" },
       );
+
+      if (!response.ok) {
+        throw new Error(`Server responded with status: ${response.status}`);
+      }
+
       const data = await response.json();
 
-      if (data.success) setStatus("confirmed");
+      if (data && data.success) {
+        setStatus("confirmed");
+      } else {
+        alert("Payment or processing confirmation failed on server.");
+      }
     } catch (error) {
+      console.error("Confirmation Error:", error);
       alert("Error processing payment.");
     } finally {
       setIsProcessing(false);
@@ -78,7 +99,7 @@ export default function App() {
   const handleCancel = async () => {
     setIsProcessing(true);
 
-    // NEW FAILSAFE: Don't crash the server if the ID is missing
+    // FAILSAFE: Prevent calling backend if state is missing
     if (!reservationId) {
       alert("Error: Reservation ID is missing from React state!");
       setIsProcessing(false);
@@ -90,13 +111,21 @@ export default function App() {
         `http://localhost:8082/cancel?id=${reservationId}`,
         { method: "POST" },
       );
+
+      if (!response.ok) {
+        throw new Error(`Server responded with status: ${response.status}`);
+      }
+
       const data = await response.json();
 
-      if (data.success) {
+      if (data && data.success) {
         setStatus("idle");
         setReservationId(null);
+      } else {
+        alert("Cancellation failed on server side.");
       }
     } catch (error) {
+      console.error("Cancellation Error:", error);
       alert("Error cancelling reservation.");
     } finally {
       setIsProcessing(false);
@@ -114,9 +143,7 @@ export default function App() {
       <h2>Online Shopping Checkout</h2>
 
       {status === "idle" && (
-        <div
-          style={{ border: "1px solid #ccc", padding: "20px", width: "300px" }}
-        >
+        <div style={{ border: "1px solid #ccc", padding: "20px", width: "300px" }}>
           <h3>Product: iPhone 15</h3>
           <p>Warehouse: Warehouse A</p>
 
@@ -139,25 +166,11 @@ export default function App() {
       )}
 
       {status === "reserved" && (
-        <div
-          style={{
-            padding: "20px",
-            border: "2px solid orange",
-            width: "300px",
-          }}
-        >
+        <div style={{ padding: "20px", border: "2px solid orange", width: "300px" }}>
           <h3 style={{ color: "orange" }}>Item Reserved!</h3>
-
-          <p>
-            <b>Product:</b> iPhone 15
-          </p>
-          <p>
-            <b>Warehouse:</b> Warehouse A
-          </p>
-          <p>
-            <b>Quantity:</b> 1
-          </p>
-
+          <p><b>Product:</b> iPhone 15</p>
+          <p><b>Warehouse:</b> Warehouse A</p>
+          <p><b>Quantity:</b> 1</p>
           <p>Your stock is locked temporarily.</p>
           <p>
             Time remaining to pay:{" "}
@@ -200,14 +213,7 @@ export default function App() {
       )}
 
       {status === "confirmed" && (
-        <div
-          style={{
-            padding: "20px",
-            border: "2px solid green",
-            width: "300px",
-            background: "#e8f5e9",
-          }}
-        >
+        <div style={{ padding: "20px", border: "2px solid green", width: "300px", background: "#e8f5e9" }}>
           <h3 style={{ color: "green" }}>Purchase Successful!</h3>
           <p>Your order is confirmed and stock is permanently reduced.</p>
           <button
@@ -220,9 +226,7 @@ export default function App() {
       )}
 
       {status === "failed" && (
-        <div
-          style={{ padding: "20px", border: "2px solid red", width: "300px" }}
-        >
+        <div style={{ padding: "20px", border: "2px solid red", width: "300px" }}>
           <h3 style={{ color: "red" }}>Out of Stock!</h3>
           <p>Sorry, another user bought the last item.</p>
           <button
@@ -235,9 +239,7 @@ export default function App() {
       )}
 
       {status === "cancelled" && (
-        <div
-          style={{ padding: "20px", border: "2px solid gray", width: "300px" }}
-        >
+        <div style={{ padding: "20px", border: "2px solid gray", width: "300px" }}>
           <h3 style={{ color: "gray" }}>Reservation Cancelled</h3>
           <p>The item has been returned to the warehouse.</p>
           <button
